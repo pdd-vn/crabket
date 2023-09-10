@@ -105,3 +105,20 @@ impl Server {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_http_request;
+
+    #[test]
+    fn test_valid_http_request() {
+        let method = "GET /foo HTTP/1.1";
+        assert!(is_http_request(method))
+    }
+
+    #[test]
+    fn test_invalid_http_request_method() {
+        let method = "BREAK /foo HTTP 1.1";
+        assert_eq!(is_http_request(method), false)
+    }
+}
