@@ -1,11 +1,15 @@
 use anyhow::Result;
-use log::{error, info, warn};
+use log::{info, warn};
 use std::io::Read;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::TcpListener;
 use std::net::TcpStream;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::thread;
+use std::time::Duration;
 
 const BUF_SIZE: usize = 1024;
 const HTTP_METHODS: [&str; 9] = [
@@ -22,6 +26,7 @@ pub struct Server {
     ip: Ipv4Addr,
     port: u16,
     mode: ServerMode,
+    tcp_listener: TcpListener,
 }
 
 fn is_http_request(method: &str) -> bool {
@@ -60,35 +65,50 @@ fn handle_tcpstream(stream: &mut TcpStream) {
 
                 response = String::from("HTTP/1.1 200 OK");
                 if body == "ping" {
-                    response.push_str("\r\n\r\npong\n")
+                    response.push_str("\r\n\r\npong")
                 }
             }
 
             let _ = stream.write(response.as_bytes());
         }
         None => {
-            warn!("Malicious packet format: {msg}")
+            warn!("Malicious packet format: {msg}");
+            let _ = stream.write(msg.as_bytes());
         }
     }
 }
 
 impl Server {
-    pub fn new(ip: Ipv4Addr, port: u16, mode: ServerMode) -> Self {
-        Server { ip, port, mode }
+    pub fn new(ip: &str, port: u16, mode: ServerMode) -> Self {
+        let ip = Ipv4Addr::from_str(ip).expect(&format!("Invalid ip: {}", ip));
+        let addr = format!("{}:{}", ip, port);
+        let tcp_listener = TcpListener::bind(addr).expect("Failed to bind address");
+        tcp_listener
+            .set_nonblocking(true)
+            .expect("Cannot set non-blocking");
+        Server {
+            ip,
+            port,
+            mode,
+            tcp_listener,
+        }
     }
 
-    pub fn run(&self) -> Result<(), anyhow::Error> {
+    pub fn run(&self, server_thread_lock: Arc<RwLock<bool>>) -> Result<(), anyhow::Error> {
         env_logger::init();
-        let addr = format!("{}:{}", self.ip, self.port);
-        let listener = TcpListener::bind(addr)?;
 
         info!("Starting server:");
         info!("- Host: {}", self.ip);
         info!("- Port: {}", self.port);
         info!("- Mode: {:?}", self.mode);
 
-        for stream_result in listener.incoming() {
+        for stream_result in self.tcp_listener.incoming() {
             info!("{}", "+".repeat(60));
+            if !*server_thread_lock.as_ref().read().unwrap() {
+                info!("Shutdown signal received. Stopping server...");
+                break;
+            }
+
             match stream_result {
                 Ok(mut stream) => match self.mode {
                     ServerMode::MultiThread => {
@@ -96,12 +116,14 @@ impl Server {
                     }
                     ServerMode::SingleThread => handle_tcpstream(&mut stream),
                 },
-                Err(e) => {
-                    error!("Failed to receive stream: {:?}", e)
+                Err(_) => {
+                    warn!("Not receving any packet!");
+                    thread::sleep(Duration::from_millis(100));
                 }
             }
         }
 
+        info!("Successfully shutdown.");
         Ok(())
     }
 }

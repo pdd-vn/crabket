@@ -1,6 +1,7 @@
+use std::sync::{Arc, RwLock};
+
 use anyhow::Result;
 use crabket_server::{Server, ServerMode};
-use std::{net::Ipv4Addr, str::FromStr};
 
 use clap::Parser;
 
@@ -8,7 +9,7 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(long, default_value = "192.168.1.100")]
+    #[arg(long, default_value = "0.0.0.0")]
     host: String,
     #[arg(long, default_value_t = 8686)]
     port: u16,
@@ -26,7 +27,10 @@ fn main() -> Result<(), anyhow::Error> {
     } else {
         mode = ServerMode::MultiThread
     }
-    let server = Server::new(Ipv4Addr::from_str(&host)?, port, mode);
-    let _ = server.run();
+    let server = Server::new(&host, port, mode);
+    let rw_lock = Arc::new(RwLock::new(true));
+    let server_thread_lock = rw_lock.clone();
+
+    let _ = server.run(server_thread_lock);
     Ok(())
 }
